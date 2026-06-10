@@ -1,67 +1,38 @@
 import sys
 import os
-from pydantic import BaseModel, Field
-from typing import List
-from agents.gemini_client import analyze_document_structured
-
-# 1. Описуємо структуру, яку хочемо отримати від ШІ
-class InvoiceItem(BaseModel):
-    description: str = Field(description="Назва товару або послуги")
-    price: float = Field(description="Ціна за одиницю або загальна вартість позиції")
-
-class ExtractedInvoice(BaseModel):
-    vendor_name: str = Field(description="Назва компанії або особи, яка виставила рахунок")
-    total_amount: float = Field(description="Загальна сума до сплати")
-    currency: str = Field(description="Валюта (наприклад: UAH, USD, EUR)")
-    items: List[InvoiceItem] = Field(description="Список знайдених позицій у рахунку")
+from agents.gemini_client import run_autonomous_agent
 
 def main():
-    print("🤖 Запуск аналітичного модуля GCP Agent Lab...")
+    print("🤖 Запуск автономного ШІ-Агента (Function Calling)...")
     
-    # Створимо тимчасовий тестовий текстовий "документ", ніби це збережений лог рахунку
-    test_file = "sample_invoice.txt"
-    invoice_content = (
-        "РАХУНОК НА ОПЛАТУ №42 від 10 червня 2026 р.\n"
-        "Постачальник: ТОВ 'Хмара Технолоджіз'\n"
-        "Покупець: ФОП Іванов\n"
-        "-----------------------------------------\n"
-        "1. Послуги хостингу Vertex AI Cloud - 1200.00 UAH\n"
-        "2. Консультація по архітектурі ШІ - 2500.00 UAH\n"
-        "-----------------------------------------\n"
-        "РАЗОМ ДО СПЛАТИ: 3700.00 UAH\n"
-        "ПДВ: 0%\n"
+    # Сценарій: Користувач дає комплексну інструкцію людською мовою
+    instruction = (
+        "Я щойно отримав рахунок від компанії 'Google Cloud Ukraine' на суму 15000 UAH. "
+        "Будь ласка, збережи цей рахунок в базу даних, а потім надішли сповіщення в канал 'finance' "
+        "про те, що новий інвойс успішно зафіксовано."
     )
     
-    with open(test_file, "w", encoding="utf-8") as f:
-        f.write(invoice_content)
-        
-    print(f"📄 Створено тестовий документ: {test_file}")
+    print("\n📝 Інструкція для агента:")
+    print(f"\"{instruction}\"\n")
     
-    prompt = "Витягни структуровані дані з цього рахунку. Обов'язково знайди всіх вендорів та позиції."
-    
-    print("📡 Надсилання документа на аналіз в Gemini (Structured Output)...")
+    print("📡 Передача управління агенту...")
     try:
-        # Викликаємо нашу нову функцію
-        extracted_data: ExtractedInvoice = analyze_document_structured(
-            prompt=prompt,
-            file_path=test_file,
-            response_schema=ExtractedInvoice
-        )
+        agent_response = run_autonomous_agent(user_instruction=instruction)
         
-        print("\n✅ Дані успішно валідовані Pydantic!")
-        print(f"Вендор: {extracted_data.vendor_name}")
-        print(f"Загальна сума: {extracted_data.total_amount} {extracted_data.currency}")
-        print("Позиції в чеку:")
-        for item in extracted_data.items:
-            print(f"  - {item.description}: {item.price}")
+        print("== Фінальна відповідь агента ==")
+        print(agent_response)
+        print("===============================\n")
+        
+        # Перевіримо, чи дійсно створився файл бази даних в результаті роботи моделі
+        if os.path.exists("mock_database.json"):
+            print("📦 Перевірка mock_database.json: Файл існує! Модель успішно виконала функцію.")
+            with open("mock_database.json", "r", encoding="utf-8") as f:
+                print(f"Зміст БД:\n{f.read()}")
+        else:
+            print("❌ Помилка: Інструмент запису в БД не був викликаний.")
             
-        # Прибираємо за собою тимчасовий файл
-        os.remove(test_file)
-        
     except Exception as e:
-        print(f"❌ Помилка під час тестування аналітики: {e}")
-        if os.path.exists(test_file):
-            os.remove(test_file)
+        print(f"❌ Критична помилка під час роботи агента: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

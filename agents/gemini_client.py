@@ -87,3 +87,37 @@ def analyze_document_structured(
     except Exception as e:
         print(f"[Помилка] Не вдалося проаналізувати документ: {e}")
         raise
+
+from agents.tools import save_invoice_to_db, send_slack_notification
+
+def run_autonomous_agent(user_instruction: str, model_name: str = "gemini-2.5-flash") -> str:
+    """
+    Запускає агента, який має доступ до інструментів (Function Calling).
+    Він може самостійно вирішувати, які функції викликати для виконання інструкції.
+    """
+    client = get_genai_client()
+    
+    # Реєструємо список доступних функцій для моделі
+    available_tools = [save_invoice_to_db, send_slack_notification]
+    
+    try:
+        # Для автоматичного виконання функцій на боці SDK використовується client.chats
+        # або конфіг enable_automatic_function_calling
+        config = types.GenerateContentConfig(
+            tools=available_tools,
+            temperature=0.2,
+            system_instruction=(
+                "Ти автономний ШІ-агент лабораторії GCP. Твоя мета — допомагати користувачу "
+                "автоматизувати рутину за допомогою доступних інструментів. "
+                "Якщо користувач просить зберегти дані або надіслати звіт — використовуй відповідні функції."
+            )
+        )
+        
+        # Запускаємо сесію чату з підтримкою автоматичного виклику інструментів
+        chat = client.chats.create(model=model_name, config=config)
+        response = chat.send_message(user_instruction)
+        
+        return response.text
+    except Exception as e:
+        print(f"[Помилка агента] Не вдалося виконати сценарій: {e}")
+        raise
