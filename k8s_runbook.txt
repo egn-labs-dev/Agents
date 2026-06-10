@@ -1,0 +1,21 @@
+# Kubernetes Runbook: Troubleshooting Pod Failures
+
+## Issue: Pod CrashLoopBackOff
+**Description:** The pod starts, crashes, and restarts repeatedly.
+**Common Causes:**
+1. Misconfigured environment variables.
+2. Missing dependencies or files in the container.
+3. The application exits immediately after starting (e.g., missing start script).
+**Diagnosis Steps:**
+- Run `kubectl describe pod <pod-name>` to check events.
+- Run `kubectl logs <pod-name> --previous` to see why the previous instance crashed.
+**Resolution:** Fix the application code or configuration preventing startup.
+
+## Issue: OOMKilled (Out of Memory)
+**Description:** The pod was terminated because it exceeded its memory limit.
+**Common Causes:**
+1. Memory leak in the application.
+2. Memory limits set too low in the deployment manifest.
+**Diagnosis Steps:**
+- Run `kubectl describe pod <pod-name>` and look for "OOMKilled" in the state reason.
+**Resolution:** Increase memory limits in `resources.limits.memory` or optimize the app.
