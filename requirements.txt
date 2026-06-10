@@ -14,7 +14,7 @@ attrs==26.1.0
 Authlib==1.6.9
 autoflake==2.3.3
 av==17.0.1
--e git+https://github.com/egn-labs-dev/AXIS.git@e8fc610ff6ec8d8bfc6c36a8f2e0a0844d0b604a#egg=axis_sovereign
+
 backoff==2.2.1
 bandit==1.9.4
 bce-python-sdk==0.9.67
