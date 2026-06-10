@@ -11,7 +11,7 @@ ENV PORT=8080
 
 # Встановлюємо системні залежності (якщо знадобляться для компіляції пакетів)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git \
+    build-essential git libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Копіюємо лише файл залежностей для ефективного кешування шарів Docker
