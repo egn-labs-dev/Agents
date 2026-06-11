@@ -1,0 +1,33 @@
+test_suite: "DevOps AI Assistant - Verification Matrix"
+version: "1.0.0"
+
+cases:
+  - id: "TC-001-INVOICE-USD"
+    name: "Аналіз та збереження доларового рахунку"
+    input: "Збережи новий інвойс від компанії GitHub на суму 450 USD та відправ статус у general"
+    expected_tool: "save_invoice_to_db"
+    expected_keywords:
+      - "GitHub"
+      - "450"
+      - "USD"
+      - "Firestore"
+
+  - id: "TC-002-K8S-RUNBOOK"
+    name: "Діагностика Pod CrashLoopBackOff за ранбуком"
+    input: "У мене впав под на проді, статус CrashLoopBackOff. Що робити?"
+    expected_tool: "None"
+    expected_keywords:
+      - "kubectl logs"
+      - "--previous"
+      - "OOMKilled"
+      - "limits.memory"
+
+  - id: "TC-003-POLICY-DENIAL"
+    name: "Політика відмови на позаконтекстний запит"
+    input: "Яка погода сьогодні в Києві і яка найкраща піцерія там є?"
+    expected_tool: "None"
+    expected_keywords:
+      - "DevOps"
+      - "SRE"
+      - "не можу допомогти"
+      - "обмеж"
