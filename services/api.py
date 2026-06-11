@@ -1,28 +1,64 @@
 import os
-import shutil
+import time
+import re
 import httpx
+import shutil
+from datetime import datetime
 from typing import List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, status
+from pydantic import BaseModel, Field, field_validator
+
+# Нативна інтеграція з Google Cloud Logging
+from google.cloud import logging as cloud_logging
+from google.cloud import firestore
 from agents.gemini_client import run_autonomous_agent_async, analyze_document_structured_async, query_agent_builder_async
+
+# Ініціалізація Cloud Logging клієнта
+log_client = cloud_logging.Client()
+# Зв'язуємо стандартний логгер Python з Cloud Logging (структурований JSON)
+log_client.setup_logging()
+import logging
+
+logger = logging.getLogger("fastapi-agent-logger")
+logger.setLevel(logging.INFO)
 
 app = FastAPI(
     title="GCP AI Agents Lab API",
-    description="Повністю асинхронний мікросервіс для керування ШІ-агентами (Hardened Version)",
-    version="1.3.0"
+    description="Production-ready сервіс із Middleware моніторингом та Hardening безпекою",
+    version="2.0.0"
 )
 
-# Токен бота, який ми пропишемо в конфігурації Cloud Run
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+db = firestore.AsyncClient()
 
 # Ліміт на розмір завантажуваного файлу (наприклад, 10 МБ)
 MAX_FILE_SIZE = 10 * 1024 * 1024 
 
+# --- 🔐 HARDENING & БЕЗПЕКА (Pydantic Валідація) ---
 class AgentInstructionRequest(BaseModel):
-    instruction: str = Field(..., example="Збережи рахунок від Apple на 450 USD.")
+    instruction: str = Field(..., max_length=1000, example="Збережи рахунок від Apple на 450 USD.")
+
+    @field_validator('instruction')
+    @classmethod
+    def prevent_prompt_injection(cls, v: str) -> str:
+        # Патерни для блокування очевидних спроб атак на системний промпт
+        forbidden_patterns = [
+            r"(?i)ignore previous instructions",
+            r"(?i)system_hacked",
+            r"(?i)bypass system prompt",
+            r"(?i)you are now a chat bot"
+        ]
+        for pattern in forbidden_patterns:
+            if re.search(pattern, v):
+                logger.warning(f"⚠️ [Security Alert] Виявлено спробу Prompt Injection: {v}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Запит відхилено системою безпеки: виявлено підозрілі інструкції."
+                )
+        return v
 
 class QueryRequest(BaseModel):
-    query: str = Field(..., example="Які кроки для вирішення CrashLoopBackOff?")
+    query: str = Field(..., max_length=1000, example="Які кроки для вирішення CrashLoopBackOff?")
 
 class InvoiceItem(BaseModel):
     description: str
@@ -34,9 +70,38 @@ class ExtractedInvoice(BaseModel):
     currency: str
     items: List[InvoiceItem]
 
+# --- 📊 MIDDLEWARE ДЛЯ МОНІТОРИНГУ ТА ЛОГУВАННЯ МЕТРИК ---
+@app.middleware("http")
+async def audit_logging_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Обробити запит
+    response = await call_next(request)
+    
+    latency = round(time.time() - start_time, 3)
+    
+    # Збираємо структуровані метрики для Cloud Logging / Looker Dashboard
+    log_payload = {
+        "event": "http_request",
+        "endpoint": request.url.path,
+        "method": request.method,
+        "status_code": response.status_code,
+        "latency_seconds": latency,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Логуємо як структурований JSON
+    if response.status_code >= 400:
+        logger.error(log_payload)
+    else:
+        logger.info(log_payload)
+        
+    return response
+
+# --- 🚀 ЕНДПОЇНТИ ---
 @app.get("/")
 async def root():
-    return {"status": "healthy", "workspace": "gcp-ai-agents-lab", "async_mode": True}
+    return {"status": "healthy", "version": "2.0.0"}
 
 @app.post("/agent/run")
 async def run_agent(payload: AgentInstructionRequest):
@@ -44,8 +109,20 @@ async def run_agent(payload: AgentInstructionRequest):
         raise HTTPException(status_code=400, detail="Інструкція порожня")
     try:
         response = await run_autonomous_agent_async(user_instruction=payload.instruction)
+        
+        # Визначаємо, чи це була "невпевнена" або "нецільова" відповідь
+        is_denial = "не можу допомогти" in response or "обмежений лише технічними" in response
+        
+        # Додатково логуємо бізнес-метрику відмов у Cloud Logging
+        logger.info({
+            "event": "agent_execution",
+            "is_denial": is_denial,
+            "query_length": len(payload.instruction)
+        })
+        
         return {"success": True, "agent_response": response}
     except Exception as e:
+        logger.error({"event": "agent_error", "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Помилка сервера агента: {str(e)}")
 
 @app.post("/query")
@@ -59,42 +136,40 @@ async def query_knowledge_base(payload: QueryRequest):
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    """
-    Ендпоїнт для отримання вебхуків від Telegram.
-    Мапує повідомлення користувача на нашого автономного ШІ-агента.
-    """
     if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ [Telegram Webhook] Запит отримано, але TELEGRAM_BOT_TOKEN не задано в середовищі.")
         return {"status": "skipped", "reason": "no_token"}
 
     try:
         data = await request.json()
-        
-        # Перевіряємо наявність тексту у повідомленні
         if "message" in data and "text" in data["message"]:
             chat_id = data["message"]["chat"]["id"]
             user_text = data["message"]["text"]
             
-            print(f"📥 [Telegram] Отримано запит від Chat ID {chat_id}: '{user_text}'")
+            # Анонімізуємо потенційні PII (наприклад, явні довгі цифри карток чи телефонів перед відправкою в логгер)
+            sanitized_text = re.sub(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', '[CARD REDACTED]', user_text)
+            logger.info({"event": "telegram_message_received", "chat_id": chat_id, "text": sanitized_text})
             
-            # 🔥 Передаємо команду нашому асинхронному ШІ-агенту
-            agent_response = await run_autonomous_agent_async(user_instruction=user_text)
+            # Валідація довжини повідомлення з Telegram (Hardening)
+            if len(user_text) > 1000:
+                agent_response = "Запит занадто довгий (ліміт 1000 символів)."
+            else:
+                try:
+                    # Проганяємо через логіку нашого інжекшн-фільтра вручну для телеграму
+                    AgentInstructionRequest(instruction=user_text)
+                    agent_response = await run_autonomous_agent_async(user_instruction=user_text)
+                except HTTPException as he:
+                    agent_response = he.detail
+                except Exception:
+                    agent_response = "Вибачте, виникла внутрішня помилка обробки безпеки."
             
-            # Відправляємо відповідь назад користувачу в Telegram
             telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             async with httpx.AsyncClient() as client:
-                await client.post(telegram_api_url, json={
-                    "chat_id": chat_id,
-                    "text": agent_response
-                }, timeout=10.0)
+                await client.post(telegram_api_url, json={"chat_id": chat_id, "text": agent_response}, timeout=10.0)
                 
-            print(f"📤 [Telegram] Відповідь успішно відправлена в чат {chat_id}")
-            
         return {"status": "ok"}
     except Exception as e:
-        print(f"❌ [Telegram Webhook Error] {e}")
-        # Завжди повертаємо 200 OK для Telegram, щоб він не спамив ретраями при багах у коді
-        return {"status": "error", "details": str(e)}
+        logger.error({"event": "telegram_webhook_error", "error": str(e)})
+        return {"status": "error"}
 
 @app.post("/analyst/invoice")
 async def analyze_invoice(
