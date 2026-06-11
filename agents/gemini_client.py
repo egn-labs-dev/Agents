@@ -3,6 +3,7 @@ from typing import Type
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+from google.cloud import discoveryengine_v1 as discoveryengine
 from agents.tools import save_invoice_to_db, send_slack_notification
 
 # Залізобетонний системний промпт з політиками поведінки агента
@@ -100,3 +101,44 @@ async def analyze_document_structured_async(
     except Exception as e:
         print(f"[Помилка асинхронного аналізу] {e}")
         raise
+
+async def query_agent_builder_async(
+    user_query: str,
+    project_id: str = "n8n-automations-497913",
+    data_store_id: str = "k8s-runbook-store",
+    location: str = "global"
+) -> str:
+    """
+    Асинхронно звертається до Vertex AI Agent Builder Data Store для отримання RAG-відповіді.
+    """
+    try:
+        client = discoveryengine.SearchServiceAsyncClient()
+        serving_config = (
+            f"projects/{project_id}/locations/{location}"
+            f"/dataStores/{data_store_id}/servingConfigs/default_serving_config"
+        )
+
+        request = discoveryengine.SearchRequest(
+            serving_config=serving_config,
+            query=user_query,
+            page_size=1
+        )
+        
+        response = await client.search(request)
+        
+        if response.summary and response.summary.summary_text:
+            return response.summary.summary_text
+        elif response.results:
+            # Фолбек, якщо LLM summary ще генерується, повертаємо найкращий сніпет
+            doc_data = response.results[0].document.derived_struct_data
+            if "snippets" in doc_data and doc_data["snippets"]:
+                return doc_data["snippets"][0].get(
+                    "snippet",
+                    "Знайдено релевантний збіг, але опис порожній."
+                )
+        
+        return "На жаль, у моїй базі знань немає інформації з цього приводу."
+    except Exception as e:
+        print(f"❌ [Agent Builder Error] {e}")
+        return f"Помилка пошуку в базі знань: {str(e)}"
+

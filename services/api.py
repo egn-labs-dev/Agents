@@ -3,12 +3,12 @@ import shutil
 from typing import List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from agents.gemini_client import run_autonomous_agent_async, analyze_document_structured_async
+from agents.gemini_client import run_autonomous_agent_async, analyze_document_structured_async, query_agent_builder_async
 
 app = FastAPI(
     title="GCP AI Agents Lab API",
     description="Повністю асинхронний мікросервіс для керування ШІ-агентами (Hardened Version)",
-    version="1.2.0"
+    version="1.3.0"
 )
 
 # Ліміт на розмір завантажуваного файлу (наприклад, 10 МБ)
@@ -16,6 +16,9 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 
 class AgentInstructionRequest(BaseModel):
     instruction: str = Field(..., example="Збережи рахунок від Apple на 450 USD.")
+
+class QueryRequest(BaseModel):
+    query: str = Field(..., example="Які кроки для вирішення CrashLoopBackOff?")
 
 class InvoiceItem(BaseModel):
     description: str
@@ -40,6 +43,15 @@ async def run_agent(payload: AgentInstructionRequest):
         return {"success": True, "agent_response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка сервера агента: {str(e)}")
+
+@app.post("/query")
+async def query_knowledge_base(payload: QueryRequest):
+    if not payload.query.strip():
+        raise HTTPException(status_code=400, detail="Запит порожній")
+    
+    # Викликаємо RAG-пошук через Agent Builder
+    answer = await query_agent_builder_async(user_query=payload.query)
+    return {"success": True, "response": answer}
 
 @app.post("/analyst/invoice")
 async def analyze_invoice(
