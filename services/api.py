@@ -1,7 +1,8 @@
 import os
 import shutil
+import httpx
 from typing import List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from pydantic import BaseModel, Field
 from agents.gemini_client import run_autonomous_agent_async, analyze_document_structured_async, query_agent_builder_async
 
@@ -10,6 +11,9 @@ app = FastAPI(
     description="Повністю асинхронний мікросервіс для керування ШІ-агентами (Hardened Version)",
     version="1.3.0"
 )
+
+# Токен бота, який ми пропишемо в конфігурації Cloud Run
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Ліміт на розмір завантажуваного файлу (наприклад, 10 МБ)
 MAX_FILE_SIZE = 10 * 1024 * 1024 
@@ -52,6 +56,45 @@ async def query_knowledge_base(payload: QueryRequest):
     # Викликаємо RAG-пошук через Agent Builder
     answer = await query_agent_builder_async(user_query=payload.query)
     return {"success": True, "response": answer}
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """
+    Ендпоїнт для отримання вебхуків від Telegram.
+    Мапує повідомлення користувача на нашого автономного ШІ-агента.
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️ [Telegram Webhook] Запит отримано, але TELEGRAM_BOT_TOKEN не задано в середовищі.")
+        return {"status": "skipped", "reason": "no_token"}
+
+    try:
+        data = await request.json()
+        
+        # Перевіряємо наявність тексту у повідомленні
+        if "message" in data and "text" in data["message"]:
+            chat_id = data["message"]["chat"]["id"]
+            user_text = data["message"]["text"]
+            
+            print(f"📥 [Telegram] Отримано запит від Chat ID {chat_id}: '{user_text}'")
+            
+            # 🔥 Передаємо команду нашому асинхронному ШІ-агенту
+            agent_response = await run_autonomous_agent_async(user_instruction=user_text)
+            
+            # Відправляємо відповідь назад користувачу в Telegram
+            telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            async with httpx.AsyncClient() as client:
+                await client.post(telegram_api_url, json={
+                    "chat_id": chat_id,
+                    "text": agent_response
+                }, timeout=10.0)
+                
+            print(f"📤 [Telegram] Відповідь успішно відправлена в чат {chat_id}")
+            
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"❌ [Telegram Webhook Error] {e}")
+        # Завжди повертаємо 200 OK для Telegram, щоб він не спамив ретраями при багах у коді
+        return {"status": "error", "details": str(e)}
 
 @app.post("/analyst/invoice")
 async def analyze_invoice(
