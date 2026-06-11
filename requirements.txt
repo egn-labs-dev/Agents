@@ -4,4 +4,5 @@ python-multipart==0.0.32
 pydantic==2.13.4
 google-genai==2.8.0
 google-cloud-discoveryengine>=0.13.0
+google-cloud-firestore>=2.16.0
 pillow==12.2.0
