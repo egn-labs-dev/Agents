@@ -1,11 +1,11 @@
 import sys
 import os
-from agents.gemini_client import run_autonomous_agent
+import asyncio
+from agents.gemini_client import run_autonomous_agent_async
 
-def main():
-    print("🤖 Запуск автономного ШІ-Агента (Function Calling)...")
+async def main():
+    print("🤖 Запуск автономного ШІ-Агента (CLI Mode)...")
     
-    # Сценарій: Користувач дає комплексну інструкцію людською мовою
     instruction = (
         "Я щойно отримав рахунок від компанії 'Google Cloud Ukraine' на суму 15000 UAH. "
         "Будь ласка, збережи цей рахунок в базу даних, а потім надішли сповіщення в канал 'finance' "
@@ -15,19 +15,16 @@ def main():
     print("\n📝 Інструкція для агента:")
     print(f"\"{instruction}\"\n")
     
-    print("📡 Передача управління агенту...")
+    print("📡 Передача управління асинхронному агенту...")
     try:
-        agent_response = run_autonomous_agent(user_instruction=instruction)
+        agent_response = await run_autonomous_agent_async(user_instruction=instruction)
         
-        print("== Фінальна відповідь агента ==")
+        print("\n== Фінальна відповідь агента ==")
         print(agent_response)
         print("===============================\n")
         
-        # Перевіримо, чи дійсно створився файл бази даних в результаті роботи моделі
         if os.path.exists("mock_database.json"):
-            print("📦 Перевірка mock_database.json: Файл існує! Модель успішно виконала функцію.")
-            with open("mock_database.json", "r", encoding="utf-8") as f:
-                print(f"Зміст БД:\n{f.read()}")
+            print("📦 Перевірка mock_database.json: Файл успішно оновлено.")
         else:
             print("❌ Помилка: Інструмент запису в БД не був викликаний.")
             
@@ -36,4 +33,5 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    # Запускаємо асинхронний контекст для CLI
+    asyncio.run(main())
