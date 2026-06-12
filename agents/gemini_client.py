@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 from google.cloud import discoveryengine_v1 as discoveryengine
 from agents.tools import save_invoice_to_db, send_slack_notification
+from agents.infra_scrubber import InfraScrubber
 
 # Залізобетонний системний промпт з політиками поведінки агента
 SYSTEM_INSTRUCTION = (
@@ -45,9 +46,10 @@ async def run_autonomous_agent_async(user_instruction: str, model_name: str = "g
     )
     
     try:
-        # Створюємо асинхронну сесію чату для виконання multi-step функцій
+        # Захист: маскуємо інфраструктурні секрети перед відправкою в LLM
+        clean_instruction, vault = InfraScrubber.scrub(user_instruction)
         chat = client.aio.chats.create(model=model_name, config=config)
-        response = await chat.send_message(user_instruction)
+        response = await chat.send_message(clean_instruction)
         return response.text
     except Exception as e:
         print(f"[Помилка асинхронного агента] {e}")
